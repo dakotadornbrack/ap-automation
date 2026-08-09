@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # A real Postgres, so the SQL rules are exercised rather than mocked.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ap
+          POSTGRES_PASSWORD: ap
+          POSTGRES_DB: ap
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ap -d ap"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://ap:ap@localhost:5432/ap
+      PYTHONPATH: src
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check src tests dashboard
+
+      - name: Unit tests
+        run: pytest --cov=ap --cov-report=term-missing --cov-report=xml
+
+      - name: End-to-end pipeline
+        run: |
+          python -m ap.generate --count 500 --out data/raw/ci_sample.csv
+          python -m ap.cli pipeline data/raw/ci_sample.csv --force
+
+      - name: Assert the rule engine found the planted duplicates
+        run: python scripts/assert_findings.py
+
+      - name: Assert re-ingesting the same file is a no-op
+        run: |
+          python -m ap.cli ingest data/raw/ci_sample.csv | tee reingest.log
+          grep -q "already ingested" reingest.log
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
