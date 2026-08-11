@@ -102,7 +102,7 @@ Every finding carries the reason it fired, so a clerk can act on it without open
 
 **Aging and controls**
 
-- `OVERDUE_30` / `_60` / `_90` — one finding per invoice at its worst tier, not three as it ages.
+- `OVERDUE_30` / `_60` / `_90` — one finding per invoice at its worst tier, not three as it ages. When an invoice crosses into a worse tier, the engine retires the stale finding rather than adding a second one, so an invoice tracked over months still appears in the queue exactly once. Findings already marked resolved are left alone.
 - `AMT_THRESHOLD` — over the 10,000 approval limit.
 - `MISSING_GL`, `FUTURE_DATE`, `LINE_MISMATCH` — data-quality controls. `LINE_MISMATCH` allows one cent of tolerance to absorb legitimate rounding on unit-price math.
 

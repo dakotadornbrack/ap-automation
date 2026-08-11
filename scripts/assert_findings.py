@@ -52,6 +52,23 @@ def main() -> int:
         self_referential = db.query(
             conn, "SELECT COUNT(*) AS n FROM exceptions WHERE invoice_id = related_id"
         )[0]["n"]
+        # An invoice must sit in exactly one overdue tier. Two open OVERDUE rows
+        # means the engine reported it again as it aged instead of moving it,
+        # which inflates the queue and makes a clerk review one invoice twice.
+        #
+        # This is a backstop, not the regression test: a fresh CI database has
+        # no invoice old enough to have crossed a threshold between runs, so
+        # this check cannot fail here. It earns its place when pointed at a
+        # long-lived database. tests/test_rules.py is what actually reproduces
+        # the aging, by planting a stale finding and re-running the engine.
+        multi_tier = db.query(
+            conn,
+            "SELECT COUNT(*) AS n FROM ("
+            "  SELECT invoice_id FROM exceptions"
+            "   WHERE resolved_at IS NULL"
+            "     AND rule_code IN ('OVERDUE_30', 'OVERDUE_60', 'OVERDUE_90')"
+            "   GROUP BY invoice_id HAVING COUNT(*) > 1) t",
+        )[0]["n"]
 
     print("Loaded:")
     check(invoices > 0, f"invoices loaded ({invoices})")
@@ -67,6 +84,10 @@ def main() -> int:
     check(
         self_referential == 0,
         f"no exception cites itself as its own duplicate ({self_referential})",
+    )
+    check(
+        multi_tier == 0,
+        f"no invoice carries more than one overdue tier ({multi_tier})",
     )
     check(
         abs(float(aging_total) - float(kpis["total_open_ap"])) < 0.01,

@@ -105,6 +105,29 @@ ON CONFLICT ON CONSTRAINT exceptions_unique_finding DO NOTHING;
 
 -- ------------------------------------------------------------------ OVERDUE
 -- One row per invoice at its worst tier, not three rows as it ages.
+--
+-- The CASE below picks a single tier per invoice, so one run can only ever
+-- write one row. Across runs is the problem: an invoice flagged OVERDUE_30 in
+-- April is OVERDUE_60 in May, and those are different rule_codes, so the
+-- unique constraint sees a different finding and ON CONFLICT lets the second
+-- one through. The invoice ends up carrying two open findings, then three.
+--
+-- So retire the stale tier first. The queue is a list of invoices needing
+-- action now, not an audit trail of how each one aged -- an AP clerk working
+-- the queue should meet every invoice exactly once. Only unresolved rows are
+-- touched: a finding somebody has already signed off on is history, and
+-- rewriting history under a reviewer is worse than a duplicate.
+DELETE FROM exceptions e
+USING v_invoice_aging a
+WHERE e.invoice_id = a.invoice_id
+  AND e.resolved_at IS NULL
+  AND e.rule_code IN ('OVERDUE_30', 'OVERDUE_60', 'OVERDUE_90')
+  AND e.rule_code <> CASE
+        WHEN a.days_past_due > 90 THEN 'OVERDUE_90'
+        WHEN a.days_past_due > 60 THEN 'OVERDUE_60'
+        ELSE 'OVERDUE_30'
+      END;
+
 INSERT INTO exceptions (invoice_id, rule_code, severity, detail)
 SELECT
     invoice_id,
